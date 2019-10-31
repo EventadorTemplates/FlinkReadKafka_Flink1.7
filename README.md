@@ -1,2 +1,2 @@
-# FlinkReadKafka_Flink1.7
-Template to read messages from Kafka
+# FlinkReadKafka
+Java example to read from Kafka using Flink 1.7
