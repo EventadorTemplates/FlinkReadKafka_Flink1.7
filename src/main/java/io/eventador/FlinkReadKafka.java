@@ -8,16 +8,21 @@ import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.AssignerWithPeriodicWatermarks;
 import org.apache.flink.streaming.api.functions.windowing.ProcessAllWindowFunction;
+import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer010;
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaProducer010;
 import org.apache.flink.streaming.connectors.kafka.internal.FlinkKafkaProducer;
+import org.apache.flink.table.sources.wmstrategies.WatermarkStrategy;
 import org.apache.flink.util.Collector;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
@@ -59,9 +64,12 @@ public class FlinkReadKafka {
         SimpleStringSchema schema = new SimpleStringSchema();
 
 
-        DataStream<String> messageStream = env.addSource(new FlinkKafkaConsumer010<>(sourceTopic, schema, params.getProperties()));
+        FlinkKafkaConsumer010<String> consumer = new FlinkKafkaConsumer010<>(sourceTopic, schema, params.getProperties());
+        consumer.assignTimestampsAndWatermarks(new KafkaTimestampExtractor());
+        DataStream<String> messageStream = env.addSource(consumer);
 
-        SingleOutputStreamOperator<Object> processedWindow = messageStream.windowAll(TumblingEventTimeWindows.of(Time.minutes(1)))
+
+        SingleOutputStreamOperator<Object> processedWindow = messageStream.windowAll(TumblingEventTimeWindows.of(Time.seconds(1)))
                 .process(new ProcessAllWindowFunction<String, Object, TimeWindow>() {
                     ObjectMapper MAPPER = new ObjectMapper();
                     String WINDOW_ID = "window_id";
@@ -78,8 +86,6 @@ public class FlinkReadKafka {
                             } catch (IOException e) {
                                 e.printStackTrace();
                             }
-
-
                         });
                     }
                 }).name("WindowProcessFunction");
@@ -89,7 +95,7 @@ public class FlinkReadKafka {
         processedWindow.print();
 
         processedWindow.addSink(new FlinkKafkaProducer010(
-                WRITE_TOPIC_PARAM,
+                writeTopic,
                 new SimpleStringSchema(),
                 params.getProperties()
         )).name("Write To Kafka");
@@ -97,6 +103,19 @@ public class FlinkReadKafka {
         env.execute("FlinkReadWriteWindowKafka");
     }
 
+    private static class KafkaTimestampExtractor implements AssignerWithPeriodicWatermarks<String> {
+
+        @Override
+        public long extractTimestamp(String event, long previousElementTimestamp) {
+            return previousElementTimestamp;
+        }
+
+        @Nullable
+        @Override
+        public Watermark getCurrentWatermark() {
+            return new Watermark(System.currentTimeMillis());
+        }
+    }
 }
 
 
